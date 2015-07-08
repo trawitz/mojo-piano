@@ -1,0 +1,68 @@
+module square_wave_generator (
+    input clk,  // clock
+    input rst,  // reset
+    input note_index[3],
+    input note_index_valid,
+    input enable,  // Tell if the square_wave_generator is valid
+    output out[8]
+  ) {
+  
+  // Note ROMs to determine how long each wavelength is
+  sig note_len_rom[8][18];
+  sig note_len_half_rom[8][18];
+
+  .clk(clk), .rst(rst) {
+    dff counter[18];
+    dff note_index_storage[3];
+  }
+  
+  always
+  {
+    // Fill up the note ROMs
+    note_len_rom[0] = 191106;
+    note_len_rom[1] = 170264;
+    note_len_rom[2] = 151685;
+    note_len_rom[3] = 143172;
+    note_len_rom[4] = 127551;
+    note_len_rom[5] = 113636;
+    note_len_rom[6] = 101239;
+    note_len_rom[7] = 95602;
+    
+    note_len_half_rom[0] = 95554;
+    note_len_half_rom[1] = 85132;
+    note_len_half_rom[2] = 75842;
+    note_len_half_rom[3] = 71586;
+    note_len_half_rom[4] = 63775;
+    note_len_half_rom[5] = 56818;
+    note_len_half_rom[6] = 50619;
+    note_len_half_rom[7] = 47801;
+    
+    // Capture the note_index
+    if(note_index_valid)
+    {
+      note_index_storage.d = note_index;
+    }
+    
+    // Increment the counter until we reach the number of cycles it takes to get to the C4 note frequency
+    if(enable)
+    {
+      counter.d = counter.q + 1;
+    }
+    
+    if(!enable || counter.q >= note_len_rom[note_index_storage.q])
+    {
+      counter.d = 0;
+    }
+    
+    // If the counter has reached at least the half frequency of the note, then we set the output to 0 otherwise it is max volume
+    // This generates a square wave
+    if(counter.q >= note_len_half_rom[note_index_storage.q])
+    {
+      out = 0;
+    }
+    else
+    {
+      out = 255;
+    }
+  }
+}

@@ -1,0 +1,17 @@
+module mixer (
+    input channel0[8],
+    input channel1[8],
+    input channel2[8],
+    input channel3[8],
+    output mixed_channels[8]
+  ) {
+  
+  sig combined[10];
+  
+  always
+  {
+    combined = channel0 + channel1 + channel2 + channel3;
+    
+    mixed_channels = combined[9:2];
+  }
+}

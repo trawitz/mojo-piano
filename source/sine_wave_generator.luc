@@ -1,0 +1,207 @@
+module sine_wave_generator (
+    input clk,  // clock
+    input rst,  // reset
+    input note_index[3],
+    input note_index_valid,
+    input enable,
+    output out[8]
+  ) {
+  
+  // A change in precision here will require updates to the other constants for factorials
+  const PRECISION_BITS = 32;
+  
+  const FINAL_RESULT_BITS = PRECISION_BITS * 32d2;
+  const FINAL_RESULT_INT_START_BIT = PRECISION_BITS;
+  
+  // These are the 1/3!, 1/5! and 1/7! in 0.16 fixed
+  const ONE_OVER_3FACT = b0010101010101010;
+  const ONE_OVER_5FACT = b0000001000100010;
+  const ONE_OVER_7FACT = b0000000000001101;
+  
+  const PI_2_16 = b110010010000111111;
+  
+  .clk(clk), .rst(rst)
+  {
+    dff cycle_counter[12];
+    dff note_index_storage[3];
+    
+    // This will contain fixed point 3.16 (the integer bit 2 is really the sign bit)
+    dff note_period_counter[19];
+	
+    dff mult_result[PRECISION_BITS];
+    
+    dff third_degree[PRECISION_BITS];
+    dff fifth_degree[PRECISION_BITS];
+    dff seven_degree[PRECISION_BITS];
+    
+    dff term2[PRECISION_BITS];
+    dff term3[PRECISION_BITS];
+    dff term4[PRECISION_BITS];
+    
+    dff final_result[FINAL_RESULT_BITS];  // Fixed point
+    
+    fsm equation_state(#INIT(WAIT)) = {WAIT, FACT_TWO, FACT_THREE, FACT_FOUR, FACT_FIVE, FACT_SIX, FACT_SEVEN, CALC_TERM2, CALC_TERM3, CALC_TERM4, FINAL};
+  }
+  
+  mult multiply(#NUM_INT_BITS(PRECISION_BITS/32d2), #NUM_FRAC_BITS(PRECISION_BITS/32d2));
+  
+  sig maclaurin_result[PRECISION_BITS];  // Fixed point
+  
+  sig note_period_add_result[19];
+  
+  sig note_period_inc_rom[8][16];
+  
+  // note period counter expanded out to the PRECISION_BITS
+  sig note_period_counter_expanded[PRECISION_BITS];
+
+  always
+  {
+    // supply the increment rom in fixed format of 0.16 (meaning 0 integer digits and 16 fractional digits)
+    note_period_inc_rom[0] = 16h113C;
+    note_period_inc_rom[1] = 16h0735;
+    note_period_inc_rom[2] = 16h0817;
+    note_period_inc_rom[3] = 16h0892;
+    note_period_inc_rom[4] = 16h099F;
+    note_period_inc_rom[5] = 16h0ACC;
+    note_period_inc_rom[6] = 16h0C1F;
+    note_period_inc_rom[7] = 16h0CD7;
+    
+    // Capture the note_index
+    if(note_index_valid)
+    {
+      note_index_storage.d = note_index;
+    }
+    
+    // If the generator is enabled, then increment the cycle cycle_counter
+    if(enable)
+    {
+      cycle_counter.d = cycle_counter.q + 1;
+    }
+    else
+    {
+      cycle_counter.d = 0;
+    }
+    
+    mult_result.d = multiply.out;
+    
+    note_period_add_result = note_period_counter.q + note_period_inc_rom[note_index_storage.q];
+    
+    // Every time the cycle_counter overflows apply the period increment to the note counter
+    // If the counter goes above 1, then we have to subtract by 2.  We subtract by 2 when it
+    // goes over 1 because the Maclaurin series becomes significantly more inaccurate outside
+    // the range [-1, 1] and the sinusoid cycle is continuous when switching from 1 to -1.
+    // So whatever positive number we have we can continue on the negative side.
+    if(cycle_counter.q == 0)
+    {
+      note_period_counter.d = note_period_add_result;
+      
+      if(note_period_add_result > PI_2_16)
+      {
+        note_period_counter.d = note_period_add_result - PI_2_16;
+      }
+    }
+    
+    // convert note_period_counter into radians by multiplying pi/2 in 1.16 format to the counter in 2.16 format to get 3.32 format
+    // Because we are potentially working with negative numbers, we must sign extend the note_period_counter such that it fits the 3.32 format.
+    
+    // Approximate the sinusoid using the Maclaurin Series sin(x) = x - (x^3/3!) + (x^5/5!) - (x^7/7!)
+    // For this we will use fixed point math
+    maclaurin_result = note_period_counter.q - term2.q + term3.q - term4.q;
+    
+    if(equation_state.q == equation_state.FINAL)
+    {
+      // our final result needs to be increased by 1 and multiplied by 127.5 to be in our range of 0-255 (sine gives us [-1, 1] so we add 1 to move to [0, 2] and then multiply by 127.5 to get [0, 255]
+      final_result.d = (maclaurin_result +
+        h00010000) * // 1.0 in 16.16 format
+        h007f8000;  // 127.5 in 16.16 format
+    }
+    
+    // Output the final result as 8 bit integer
+    out = final_result.q[FINAL_RESULT_INT_START_BIT+:8];
+    
+    note_period_counter_expanded = (note_period_counter.q << (PRECISION_BITS - 16));
+	
+    // Determine the multiplicands
+    case(equation_state.q)
+    {
+      default:
+        multiply.multa = note_period_counter_expanded;
+        multiply.multb = note_period_counter_expanded;
+        
+      equation_state.FACT_THREE || equation_state.FACT_FOUR || equation_state.FACT_FIVE || equation_state.FACT_SIX || equation_state.FACT_SEVEN:
+        multiply.multa = mult_result.q;
+        multiply.multb = note_period_counter_expanded;
+        
+      equation_state.CALC_TERM2:
+        multiply.multa = third_degree.q;
+        multiply.multb = ONE_OVER_3FACT;
+        
+      equation_state.CALC_TERM3:
+        multiply.multa = fifth_degree.q;
+        multiply.multb = ONE_OVER_5FACT;
+        
+      equation_state.CALC_TERM4:
+        multiply.multa = seven_degree.q;
+        multiply.multb = ONE_OVER_7FACT;
+    }
+    
+    case(equation_state.q)
+    {
+      equation_state.WAIT:
+        // wait until the cycle counter has reached 0 which means the note_period_counter will be executed
+        // So on the next cycle we will have the new note_period_counter to work with and be in the state to calculate x^2 factor.
+        if(cycle_counter.q == 0)
+        {
+          equation_state.d = equation_state.FACT_TWO;
+        }
+        
+      equation_state.FACT_TWO:
+        equation_state.d = equation_state.FACT_THREE;
+        
+      equation_state.FACT_THREE:
+        equation_state.d = equation_state.FACT_FOUR;
+        third_degree.d = multiply.out;
+        
+      equation_state.FACT_FOUR:
+        equation_state.d = equation_state.FACT_FIVE;
+        
+      equation_state.FACT_FIVE:
+        equation_state.d = equation_state.FACT_SIX;
+        fifth_degree.d = multiply.out;
+        
+      equation_state.FACT_SIX:
+        equation_state.d = equation_state.FACT_SEVEN;
+        
+      equation_state.FACT_SEVEN:
+        equation_state.d = equation_state.CALC_TERM2;
+        seven_degree.d = multiply.out;
+        
+      equation_state.CALC_TERM2:
+        equation_state.d = equation_state.CALC_TERM3;
+        term2.d = multiply.out;
+        
+      equation_state.CALC_TERM3:
+        equation_state.d = equation_state.CALC_TERM4;
+        term3.d = multiply.out;
+        
+      equation_state.CALC_TERM4:
+        equation_state.d = equation_state.FINAL;
+        term4.d = multiply.out;
+        
+      equation_state.FINAL:
+        equation_state.d = equation_state.FACT_TWO;
+    }
+    
+    // If not enabled, then reset all the terms
+    if(!enable)
+    {
+      equation_state.d = equation_state.FACT_TWO;
+      note_period_counter.d = 0;
+      term2.d = 0;
+      term3.d = 0;
+      term4.d = 0;
+      final_result.d = 0;
+    }
+	
+  }
+}

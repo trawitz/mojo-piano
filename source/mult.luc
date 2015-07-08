@@ -1,0 +1,27 @@
+module mult #(
+  NUM_INT_BITS = 16 : NUM_INT_BITS > -1,
+    NUM_FRAC_BITS = 16 : NUM_FRAC_BITS > -1
+    )(
+    input multa[NUM_INT_BITS + NUM_FRAC_BITS],  // multiplicand in fixed point 16.16
+    input multb[NUM_INT_BITS + NUM_FRAC_BITS],
+    output out[NUM_INT_BITS + NUM_FRAC_BITS]
+  ) {
+  
+  const TOTAL_NUM_BITS = NUM_INT_BITS + NUM_FRAC_BITS;
+  const HIGH_BIT = TOTAL_NUM_BITS - 32d1;
+  const INTERMEDIATE_SIGN_EXPANSION = NUM_INT_BITS;
+  
+  const INTERMEDIATE_INT_BIT_START = NUM_FRAC_BITS * 32d2;
+  const INTERMEDIATE_FRAC_HIGH_BIT = INTERMEDIATE_INT_BIT_START - 32d1;
+
+  sig intermediate[32d2*(NUM_INT_BITS + NUM_FRAC_BITS)];
+  
+  always
+  {
+    // Sign extend the multiplicands out to the intermediate bits
+    intermediate = c{ INTERMEDIATE_SIGN_EXPANSIONx{multa[HIGH_BIT]}, multa} * c{ INTERMEDIATE_SIGN_EXPANSIONx{multb[HIGH_BIT]}, multb};
+    
+    // Convert back down to a 32 bit 16.16 format
+    out = c{ intermediate[INTERMEDIATE_INT_BIT_START+:NUM_INT_BITS], intermediate[INTERMEDIATE_FRAC_HIGH_BIT-:NUM_FRAC_BITS]};
+  }
+}

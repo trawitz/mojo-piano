@@ -1,0 +1,36 @@
+module pwm #(
+  COUNTER_MAX = 255 : COUNTER_MAX > 0
+  )
+  (
+    input clk,  // clock
+    input rst,  // reset
+    input compare[$clog2(COUNTER_MAX)],  // Value to compare counter against
+    output pulse
+  )
+{
+  
+  dff counter[$clog2(COUNTER_MAX)](.clk(clk), .rst(rst));
+
+  always
+  {
+    // If the counter has reached the max, then reset to 0 otherwise keep incrementing
+    if(counter.q >= COUNTER_MAX)
+    {
+      counter.d = 0;
+    }
+    else
+    {
+      counter.d = counter.q + 1;
+    }
+    
+    // If the counter has reached the compare value, then output a 0 otherwise output a 1
+    if(counter.q >= compare)
+    {
+      pulse = 0;
+    }
+    else
+    {
+      pulse = 1;
+    }
+  }
+}

@@ -1,0 +1,54 @@
+module mojo_top (
+    input clk,              // 50MHz clock
+    input rst_n,            // reset button (active low)
+    output led [8],         // 8 user controllable LEDs
+    input cclk,             // configuration clock, AVR ready when high
+    output spi_miso,        // AVR SPI MISO
+    input spi_ss,           // AVR SPI Slave Select
+    input spi_mosi,         // AVR SPI MOSI
+    input spi_sck,          // AVR SPI Clock
+    output spi_channel [4], // AVR general purpose pins (used by default to select ADC channel)
+    input avr_tx,           // AVR TX (FPGA RX)
+    output avr_rx,          // AVR RX (FPGA TX)
+    input avr_rx_busy,      // AVR RX buffer full
+    output speaker,
+    input keyboard_btn[8]
+  ) {
+  
+  sig rst;
+  
+  .clk(clk), .rst(rst)
+  {
+    dff keyboard_btn_pressed[8];
+    
+    pwm pwm1;
+    square_wave_generator swg[4];
+    wave_arbiter square_wave_arb(.keys_pressed(keyboard_btn_pressed.q));
+  }
+  
+  mixer mix(.channel0(swg.out[0]), .channel1(swg.out[1]), .channel2(swg.out[2]), .channel3(swg.out[3]));
+  
+  always
+  {
+    rst = ~rst_n;
+    
+    // Capture the keyboard input instead of directly sending it in since the button press can occur at any point during the clock cycle and if it is near the end it may mess things up
+    keyboard_btn_pressed.d = keyboard_btn;
+    
+    swg.enable = {square_wave_arb.wave_gen_valids[3], square_wave_arb.wave_gen_valids[2], square_wave_arb.wave_gen_valids[1], square_wave_arb.wave_gen_valids[0]};
+    
+    swg.note_index_valid = {square_wave_arb.note_to_wavegen_valid[3], square_wave_arb.note_to_wavegen_valid[2], square_wave_arb.note_to_wavegen_valid[1], square_wave_arb.note_to_wavegen_valid[0]};
+    
+    swg.note_index = {square_wave_arb.note_index, square_wave_arb.note_index, square_wave_arb.note_index, square_wave_arb.note_index};
+    
+    pwm1.compare = mix.mixed_channels;
+    
+    speaker = pwm1.pulse;
+    
+    led = c{square_wave_arb.keys_playing};             // Display the valid wave generators
+    
+    spi_miso = bz;          // not using SPI
+    spi_channel = bzzzz;    // not using flags
+    avr_rx = bz;            // not using serial port
+  }
+}
